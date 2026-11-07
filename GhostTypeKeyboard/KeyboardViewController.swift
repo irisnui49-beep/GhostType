@@ -9,10 +9,17 @@ final class KeyboardViewController: UIInputViewController {
     private let stopButton = UIButton(type: .system)
     private let nextButton = UIButton(type: .system)
     private let delaySlider = UISlider()
+    
     private var messages: [String] = []
     private var messageIndex = 0
     private var typingTask: Task<Void, Never>?
-    private var isTyping = false
+    private var isTyping = false {
+        didSet {
+            // Cập nhật trạng thái bật/tắt của nút bấm cho trực quan
+            startButton.isEnabled = !isTyping
+            nextButton.isEnabled = !isTyping
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -21,20 +28,22 @@ final class KeyboardViewController: UIInputViewController {
         loadMessages()
     }
 
-    deinit { typingTask?.cancel() }
+    deinit { 
+        typingTask?.cancel() 
+    }
 
     private func buildUI() {
         let title = UILabel()
         title.text = "GhostType"
-        title.font = .boldSystemFont(ofSize: 16)
+        title.font = .boldSystemFont(ofSize: 15)
 
         statusLabel.text = "Sẵn sàng"
-        statusLabel.font = .systemFont(ofSize: 12)
+        statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabel
 
         startButton.setTitle("▶ Bắt đầu", for: .normal)
         stopButton.setTitle("■ Dừng", for: .normal)
-        nextButton.setTitle("Câu tiếp", for: .normal)
+        nextButton.setTitle("Câu tiếp ➡", for: .normal)
 
         startButton.addTarget(self, action: #selector(startTyping), for: .touchUpInside)
         stopButton.addTarget(self, action: #selector(stopTyping), for: .touchUpInside)
@@ -51,16 +60,17 @@ final class KeyboardViewController: UIInputViewController {
 
         let stack = UIStackView(arrangedSubviews: [title, statusLabel, buttons, delaySlider])
         stack.axis = .vertical
-        stack.spacing = 9
+        stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -8),
-            view.heightAnchor.constraint(equalToConstant: 116)
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -6),
+            // Tăng nhẹ chiều cao để bàn phím thoáng hơn, tránh bị tràn trên một số máy
+            view.heightAnchor.constraint(equalToConstant: 135)
         ])
     }
 
@@ -70,34 +80,53 @@ final class KeyboardViewController: UIInputViewController {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         messageIndex = min(messageIndex, max(messages.count - 1, 0))
-        statusLabel.text = messages.isEmpty ? "Chưa có câu — mở app để nhập" : "\(messages.count) câu đã tải"
+        
+        if messages.isEmpty {
+            statusLabel.text = "Chưa có câu — hãy mở app chính để nhập"
+        } else {
+            statusLabel.text = "Đã tải \(messages.count) câu (Đang ở câu \(messageIndex + 1))"
+        }
     }
 
     @objc private func startTyping() {
         guard !isTyping else { return }
         loadMessages()
-        guard messageIndex < messages.count else {
-            statusLabel.text = "Đã hết danh sách"
+        
+        guard !messages.isEmpty, messageIndex < messages.count else {
+            statusLabel.text = "Danh sách trống hoặc đã hết câu!"
             return
         }
+        
         let message = messages[messageIndex]
         guard !message.isEmpty else { return }
 
         isTyping = true
         statusLabel.text = "Đang gõ câu \(messageIndex + 1)/\(messages.count)…"
+        
         typingTask = Task { @MainActor in
             for character in message {
+                // Kiểm tra hủy task liên tục
                 if Task.isCancelled { break }
+                
                 textDocumentProxy.insertText(String(character))
+                
                 let base = Double(delaySlider.value)
                 let jitter = Double.random(in: 0.0...0.07)
-                try? await Task.sleep(nanoseconds: UInt64((base + jitter) * 1_000_000_000))
+                
+                do {
+                    try await Task.sleep(nanoseconds: UInt64((base + jitter) * 1_000_000_000))
+                } catch {
+                    // Task bị hủy trong lúc sleep
+                    break
+                }
             }
+            
             isTyping = false
-            if !Task.isCancelled {
-                statusLabel.text = "Xong câu \(messageIndex + 1). Tự bấm Gửi, rồi chọn Câu tiếp."
-            } else {
+            
+            if Task.isCancelled {
                 statusLabel.text = "Đã dừng"
+            } else {
+                statusLabel.text = "Xong câu \(messageIndex + 1). Bấm Gửi, rồi bấm 'Câu tiếp'."
             }
         }
     }
@@ -111,11 +140,11 @@ final class KeyboardViewController: UIInputViewController {
 
     @objc private func nextMessage() {
         stopTyping()
-        messageIndex += 1
-        if messageIndex >= messages.count {
-            statusLabel.text = "Đã hết danh sách"
-        } else {
-            statusLabel.text = "Sẵn sàng câu \(messageIndex + 1)/\(messages.count)"
-        }
+        loadMessages()
+        
+        guard !messages.isEmpty else { return }
+        
+        messageIndex = (messageIndex + 1) % messages.count // Vòng lặp lại từ đầu nếu hết danh sách
+        statusLabel.text = "Sẵn sàng câu \(messageIndex + 1)/\(messages.count)"
     }
 }
