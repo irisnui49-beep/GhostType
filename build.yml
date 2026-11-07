@@ -1,0 +1,33 @@
+name: Build GhostType (unsigned)
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build unsigned app for iPhone
+        run: |
+          xcodebuild \
+            -project GhostType.xcodeproj \
+            -scheme GhostType \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -n 1)
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -r GhostType-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GhostType-unsigned-ipa
+          path: GhostType-unsigned.ipa
